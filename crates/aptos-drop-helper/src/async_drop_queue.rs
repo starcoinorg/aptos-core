@@ -1,9 +1,12 @@
 // Copyright © Aptos Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::metrics::TIMER;
+#[cfg(feature = "metrics")]
+use {
+    crate::metrics::TIMER,
+    aptos_metrics_core::IntGaugeHelper,
+};
 use aptos_infallible::Mutex;
-use aptos_metrics_core::TimerHelper;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use threadpool::ThreadPool;
 
@@ -34,6 +37,7 @@ impl AsyncDropQueue {
     }
 
     pub fn enqueue_drop<V: Send + 'static>(&self, v: V) {
+        #[cfg(feature = "metrics")]
         let _timer = TIMER.timer_with(&[self.name, "enqueue_drop"]);
 
         self.token_rx.lock().recv().unwrap();
@@ -41,6 +45,7 @@ impl AsyncDropQueue {
         let token_tx = self.token_tx.clone();
         let name = self.name;
         self.thread.execute(move || {
+            #[cfg(feature = "metrics")]
             let _timer = TIMER.timer_with(&[name, "real_drop"]);
 
             drop(v);

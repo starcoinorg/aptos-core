@@ -14,6 +14,9 @@ rust-version = { workspace = true }
 
 [dependencies]
 aptos-infallible = { workspace = true }
-aptos-metrics-core = { workspace = true }
+aptos-metrics-core = { workspace = true, optional = true }
 once_cell = { workspace = true }
 threadpool = { workspace = true }
+
+[features]
+metrics = ["aptos-metrics-core"]

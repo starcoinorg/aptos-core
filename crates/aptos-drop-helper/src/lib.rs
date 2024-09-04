@@ -6,6 +6,7 @@ use once_cell::sync::Lazy;
 
 pub mod async_concurrent_dropper;
 pub mod async_drop_queue;
+#[cfg(feature = "metrics")]
 mod metrics;
 
 pub static DEFAULT_DROPPER: Lazy<AsyncConcurrentDropper> =

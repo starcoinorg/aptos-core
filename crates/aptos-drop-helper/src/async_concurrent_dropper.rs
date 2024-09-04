@@ -1,9 +1,13 @@
 // Copyright © Aptos Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::metrics::{GAUGE, TIMER};
+#[cfg(feature = "metrics")]
+use {
+    crate::metrics::{GAUGE, TIMER},
+    aptos_metrics_core::{IntGaugeHelper, TimerHelper},
+};
+
 use aptos_infallible::Mutex;
-use aptos_metrics_core::{IntGaugeHelper, TimerHelper};
 use std::sync::{
     mpsc::{channel, Receiver, Sender},
     Arc, Condvar,
@@ -43,19 +47,23 @@ impl AsyncConcurrentDropper {
     }
 
     pub fn wait_for_backlog_drop(&self, no_more_than: usize) {
+        #[cfg(feature = "metrics")]
         let _timer = TIMER.timer_with(&[self.name, "wait_for_backlog_drop"]);
         self.num_tasks_tracker.wait_for_backlog_drop(no_more_than);
     }
 
     fn schedule_drop_impl<V: Send + 'static>(&self, v: V, notif_sender_opt: Option<Sender<()>>) {
+        #[cfg(feature = "metrics")]
         let _timer = TIMER.timer_with(&[self.name, "enqueue_drop"]);
         let num_tasks = self.num_tasks_tracker.inc();
+        #[cfg(feature = "metrics")]
         GAUGE.set_with(&[self.name, "num_tasks"], num_tasks as i64);
 
         let name = self.name;
         let num_tasks_tracker = self.num_tasks_tracker.clone();
 
         self.thread_pool.execute(move || {
+            #[cfg(feature = "metrics")]
             let _timer = TIMER.timer_with(&[name, "real_drop"]);
 
             drop(v);
