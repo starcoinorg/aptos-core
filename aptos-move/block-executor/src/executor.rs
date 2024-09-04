@@ -2,12 +2,13 @@
 // Parts of the project are originally copyright © Meta Platforms, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "metrics")]
+use crate::counters::{self,
+                      PARALLEL_EXECUTION_SECONDS, RAYON_EXECUTION_SECONDS, TASK_EXECUTE_SECONDS,
+                      TASK_VALIDATE_SECONDS, VM_INIT_SECONDS, WORK_WITH_TASK_SECONDS,
+};
+
 use crate::{
-    counters,
-    counters::{
-        PARALLEL_EXECUTION_SECONDS, RAYON_EXECUTION_SECONDS, TASK_EXECUTE_SECONDS,
-        TASK_VALIDATE_SECONDS, VM_INIT_SECONDS, WORK_WITH_TASK_SECONDS,
-    },
     errors::*,
     executor_utilities::*,
     explicit_sync_wrapper::ExplicitSyncWrapper,
@@ -74,9 +75,9 @@ pub struct BlockExecutor<T, E, S, L, X> {
 impl<T, E, S, L, X> BlockExecutor<T, E, S, L, X>
 where
     T: Transaction,
-    E: ExecutorTask<Txn = T>,
-    S: TStateView<Key = T::Key> + Sync,
-    L: TransactionCommitHook<Output = E::Output>,
+    E: ExecutorTask<Txn=T>,
+    S: TStateView<Key=T::Key> + Sync,
+    L: TransactionCommitHook<Output=E::Output>,
     X: Executable + 'static,
 {
     /// The caller needs to ensure that concurrency_level > 1 (0 is illegal and 1 should
@@ -109,6 +110,7 @@ where
         base_view: &S,
         parallel_state: ParallelState<T, X>,
     ) -> Result<bool, PanicOr<ParallelBlockExecutionError>> {
+        #[cfg(feature = "metrics")]
         let _timer = TASK_EXECUTE_SECONDS.start_timer();
         let txn = &signature_verified_block[idx_to_execute as usize];
 
@@ -224,12 +226,12 @@ where
                                 "Record change failed with CodeInvariantError: {:?}",
                                 m
                             )));
-                        },
+                        }
                         PanicOr::Or(_) => {
                             read_set.capture_delayed_field_read_error(&PanicOr::Or(
                                 MVDelayedFieldsError::DeltaApplicationFailure,
                             ));
-                        },
+                        }
                     };
                 }
             }
@@ -245,12 +247,12 @@ where
                 // Apply the writes/deltas to the versioned_data_cache.
                 let resource_write_set = apply_updates(&output)?;
                 (ExecutionStatus::Success(output), resource_write_set)
-            },
+            }
             ExecutionStatus::SkipRest(output) => {
                 // Apply the writes/deltas and record status indicating skip.
                 let resource_write_set = apply_updates(&output)?;
                 (ExecutionStatus::SkipRest(output), resource_write_set)
-            },
+            }
             ExecutionStatus::SpeculativeExecutionAbortError(msg) => {
                 read_set.capture_delayed_field_read_error(&PanicOr::Or(
                     MVDelayedFieldsError::DeltaApplicationFailure,
@@ -259,21 +261,21 @@ where
                     ExecutionStatus::SpeculativeExecutionAbortError(msg),
                     Vec::new(),
                 )
-            },
+            }
             ExecutionStatus::Abort(err) => {
                 // Abort indicates an unrecoverable VM failure, but currently it seemingly
                 // can occur due to speculative execution (in particular for BlockMetadata txn).
                 // Therefore, we do not short circuit here. TODO: investigate if we can
                 // eliminate the scenarios when Abort status can happen speculatively.
                 (ExecutionStatus::Abort(err), Vec::new())
-            },
+            }
             ExecutionStatus::DelayedFieldsCodeInvariantError(msg) => {
                 return Err(code_invariant_error(format!(
                     "[Execution] At txn {}, failed with DelayedFieldsCodeInvariantError: {:?}",
                     idx_to_execute, msg
                 ))
-                .into());
-            },
+                    .into());
+            }
         };
 
         // Remove entries from previous write/delta set that were not overwritten.
@@ -298,7 +300,7 @@ where
 
                     versioned_cache.data().remove(&k, idx_to_execute);
                     versioned_cache.group_data().remove(&k, idx_to_execute);
-                },
+                }
             };
         }
 
@@ -322,6 +324,7 @@ where
         last_input_output: &TxnLastInputOutput<T, E::Output, E::Error>,
         versioned_cache: &MVHashMap<T::Key, T::Tag, T::Value, X, T::Identifier>,
     ) -> Result<bool, PanicError> {
+        #[cfg(feature = "metrics")]
         let _timer = TASK_VALIDATE_SECONDS.start_timer();
         let read_set = last_input_output
             .read_set(idx_to_validate)
@@ -352,6 +355,7 @@ where
         last_input_output: &TxnLastInputOutput<T, E::Output, E::Error>,
         versioned_cache: &MVHashMap<T::Key, T::Tag, T::Value, X, T::Identifier>,
     ) {
+        #[cfg(feature = "metrics")]
         counters::SPECULATIVE_ABORT_COUNT.inc();
 
         // Any logs from the aborted execution should be cleared and not reported.
@@ -374,7 +378,7 @@ where
                         // a transaction execution changes metadata, suffix validation
                         // is guaranteed to be triggered. Estimation affecting execution
                         // behavior is left to size, which uses a heuristic approach.
-                    },
+                    }
                 };
             }
         }
@@ -432,10 +436,10 @@ where
                     match e {
                         CommitError::ReExecutionNeeded(_) => {
                             execution_still_valid = false;
-                        },
+                        }
                         CommitError::CodeInvariantError(msg) => {
                             return Err(code_invariant_error(msg));
-                        },
+                        }
                     }
                 }
             }
@@ -499,13 +503,13 @@ where
                     Self::validate(txn_idx, last_input_output, versioned_cache)?;
                 if !validation_result
                     || !Self::validate_commit_ready(txn_idx, versioned_cache, last_input_output)
-                        .unwrap_or(false)
+                    .unwrap_or(false)
                 {
                     return Err(code_invariant_error(format!(
                         "Validation after re-execution failed for {} txn, validate() = {}",
                         txn_idx, validation_result
                     ))
-                    .into());
+                        .into());
                 }
             }
 
@@ -522,10 +526,10 @@ where
                         .map(|approx_output| {
                             approx_output
                                 + if block_gas_limit_type.include_user_txn_size_in_block_output() {
-                                    block[txn_idx as usize].user_txn_bytes_len()
-                                } else {
-                                    0
-                                } as u64
+                                block[txn_idx as usize].user_txn_bytes_len()
+                            } else {
+                                0
+                            } as u64
                         })
                 });
                 let txn_read_write_summary = block_gas_limit_type
@@ -720,14 +724,14 @@ where
             match last_input_output.txn_output(txn_idx).unwrap().as_ref() {
                 ExecutionStatus::Success(output) | ExecutionStatus::SkipRest(output) => {
                     txn_commit_listener.on_transaction_committed(txn_idx, output);
-                },
+                }
                 ExecutionStatus::Abort(_) => {
                     txn_commit_listener.on_execution_aborted(txn_idx);
-                },
+                }
                 ExecutionStatus::SpeculativeExecutionAbortError(msg)
                 | ExecutionStatus::DelayedFieldsCodeInvariantError(msg) => {
                     panic!("Cannot be materializing with {}", msg);
-                },
+                }
             }
         }
 
@@ -735,12 +739,12 @@ where
         match last_input_output.take_output(txn_idx) {
             ExecutionStatus::Success(t) | ExecutionStatus::SkipRest(t) => {
                 final_results[txn_idx as usize] = t;
-            },
+            }
             ExecutionStatus::Abort(_) => (),
             ExecutionStatus::SpeculativeExecutionAbortError(msg)
             | ExecutionStatus::DelayedFieldsCodeInvariantError(msg) => {
                 panic!("Cannot be materializing with {}", msg);
-            },
+            }
         };
         Ok(())
     }
@@ -761,10 +765,13 @@ where
         num_workers: usize,
     ) -> Result<(), PanicOr<ParallelBlockExecutionError>> {
         // Make executor for each task. TODO: fast concurrent executor.
+        #[cfg(feature = "metrics")]
         let init_timer = VM_INIT_SECONDS.start_timer();
         let executor = E::init(env.clone(), base_view);
+        #[cfg(feature = "metrics")]
         drop(init_timer);
 
+        #[cfg(feature = "metrics")]
         let _timer = WORK_WITH_TASK_SECONDS.start_timer();
         let mut scheduler_task = SchedulerTask::Retry;
 
@@ -817,7 +824,7 @@ where
                         versioned_cache,
                         scheduler,
                     )?
-                },
+                }
                 SchedulerTask::ExecutionTask(
                     txn_idx,
                     incarnation,
@@ -839,7 +846,7 @@ where
                         ),
                     )?;
                     scheduler.finish_execution(txn_idx, incarnation, needs_suffix_validation)?
-                },
+                }
                 SchedulerTask::ExecutionTask(_, _, ExecutionTaskType::Wakeup(condvar)) => {
                     {
                         let (lock, cvar) = &*condvar;
@@ -852,12 +859,12 @@ where
                     }
 
                     scheduler.next_task()
-                },
+                }
                 SchedulerTask::Retry => scheduler.next_task(),
                 SchedulerTask::Done => {
                     drain_commit_queue()?;
                     break Ok(());
-                },
+                }
             }
         }
     }
@@ -868,6 +875,7 @@ where
         signature_verified_block: &[T],
         base_view: &S,
     ) -> Result<BlockOutput<E::Output>, ()> {
+        #[cfg(feature = "metrics")]
         let _timer = PARALLEL_EXECUTION_SECONDS.start_timer();
         // Using parallel execution with 1 thread currently will not work as it
         // will only have a coordinator role but no workers for rolling commit.
@@ -908,6 +916,7 @@ where
         let last_input_output = TxnLastInputOutput::new(num_txns);
         let scheduler = Scheduler::new(num_txns);
 
+        #[cfg(feature = "metrics")]
         let timer = RAYON_EXECUTION_SECONDS.start_timer();
         self.executor_thread_pool.scope(|s| {
             for _ in 0..num_workers {
@@ -939,8 +948,10 @@ where
                 });
             }
         });
+        #[cfg(feature = "metrics")]
         drop(timer);
 
+        #[cfg(feature = "metrics")]
         counters::update_state_counters(versioned_cache.stats(), true);
 
         // Explicit async drops.
@@ -996,7 +1007,7 @@ where
                         "Sequential execution must not create duplicate aggregators"
                     );
                     updates.insert(id, value);
-                },
+                }
                 DelayedChange::Apply(apply) => {
                     match apply.get_apply_base_id(&id) {
                         ApplyBase::Previous(base_id) => {
@@ -1005,14 +1016,14 @@ where
                                 expect_ok(apply.apply_to_base(
                                     unsync_map.fetch_delayed_field(&base_id).unwrap(),
                                 ))
-                                .unwrap(),
+                                    .unwrap(),
                             );
-                        },
+                        }
                         ApplyBase::Current(base_id) => {
                             second_phase.push((id, base_id, apply));
-                        },
+                        }
                     };
-                },
+                }
             }
         }
         for (id, base_id, apply) in second_phase.into_iter() {
@@ -1026,7 +1037,7 @@ where
                             .unwrap_or_else(|| unsync_map.fetch_delayed_field(&base_id).unwrap()),
                     ),
                 )
-                .unwrap(),
+                    .unwrap(),
             );
         }
         for (id, value) in updates.into_iter() {
@@ -1044,8 +1055,10 @@ where
         resource_group_bcs_fallback: bool,
     ) -> Result<BlockOutput<E::Output>, SequentialBlockExecutionError<E::Error>> {
         let num_txns = signature_verified_block.len();
+        #[cfg(feature = "metrics")]
         let init_timer = VM_INIT_SECONDS.start_timer();
         let executor = E::init(env, base_view);
+        #[cfg(feature = "metrics")]
         drop(init_timer);
 
         let start_counter = gen_id_start_value(true);
@@ -1081,7 +1094,7 @@ where
                     return Err(SequentialBlockExecutionError::ErrorToReturn(
                         BlockExecutionError::FatalVMError(err),
                     ));
-                },
+                }
                 ExecutionStatus::DelayedFieldsCodeInvariantError(msg) => {
                     if let Some(commit_hook) = &self.transaction_commit_hook {
                         commit_hook.on_execution_aborted(idx as TxnIndex);
@@ -1090,7 +1103,7 @@ where
                     return Err(SequentialBlockExecutionError::ErrorToReturn(
                         BlockExecutionError::FatalBlockExecutorError(code_invariant_error(msg)),
                     ));
-                },
+                }
                 ExecutionStatus::SpeculativeExecutionAbortError(msg) => {
                     if let Some(commit_hook) = &self.transaction_commit_hook {
                         commit_hook.on_execution_aborted(idx as TxnIndex);
@@ -1099,7 +1112,7 @@ where
                     return Err(SequentialBlockExecutionError::ErrorToReturn(
                         BlockExecutionError::FatalBlockExecutorError(code_invariant_error(msg)),
                     ));
-                },
+                }
                 ExecutionStatus::Success(output) | ExecutionStatus::SkipRest(output) => {
                     // Calculating the accumulated gas costs of the committed txns.
                     let fee_statement = output.fee_statement();
@@ -1112,15 +1125,15 @@ where
                         .map(|_| {
                             output.output_approx_size()
                                 + if self
-                                    .config
-                                    .onchain
-                                    .block_gas_limit_type
-                                    .include_user_txn_size_in_block_output()
-                                {
-                                    txn.user_txn_bytes_len()
-                                } else {
-                                    0
-                                } as u64
+                                .config
+                                .onchain
+                                .block_gas_limit_type
+                                .include_user_txn_size_in_block_output()
+                            {
+                                txn.user_txn_bytes_len()
+                            } else {
+                                0
+                            } as u64
                         });
 
                     let sequential_reads = latest_view.take_sequential_reads();
@@ -1192,27 +1205,27 @@ where
                                 bcs::to_bytes(&finalized_group).is_err()
                             })
                             || output.resource_group_write_set().into_iter().any(
-                                |(group_key, _, group_ops)| {
-                                    fail_point!("fail-point-resource-group-serialization", |_| {
+                            |(group_key, _, group_ops)| {
+                                fail_point!("fail-point-resource-group-serialization", |_| {
                                         true
                                     });
 
-                                    let mut finalized_group = finalize(group_key);
-                                    for (value_tag, (group_op, _)) in group_ops {
-                                        if group_op.is_deletion() {
-                                            finalized_group.remove(&value_tag);
-                                        } else {
-                                            finalized_group.insert(
-                                                value_tag,
-                                                group_op
-                                                    .extract_raw_bytes()
-                                                    .expect("Not a deletion"),
-                                            );
-                                        }
+                                let mut finalized_group = finalize(group_key);
+                                for (value_tag, (group_op, _)) in group_ops {
+                                    if group_op.is_deletion() {
+                                        finalized_group.remove(&value_tag);
+                                    } else {
+                                        finalized_group.insert(
+                                            value_tag,
+                                            group_op
+                                                .extract_raw_bytes()
+                                                .expect("Not a deletion"),
+                                        );
                                     }
-                                    bcs::to_bytes(&finalized_group).is_err()
-                                },
-                            );
+                                }
+                                bcs::to_bytes(&finalized_group).is_err()
+                            },
+                        );
 
                         if serialization_error {
                             // The corresponding error / alert must already be triggered, the goal in sequential
@@ -1296,7 +1309,7 @@ where
                         commit_hook.on_transaction_committed(idx as TxnIndex, &output);
                     }
                     ret.push(output);
-                },
+                }
             };
             // When the txn is a SkipRest txn, halt sequential execution.
             if must_skip {
@@ -1313,6 +1326,7 @@ where
 
         ret.resize_with(num_txns, E::Output::skip_output);
 
+        #[cfg(feature = "metrics")]
         counters::update_state_counters(unsync_map.stats(), false);
 
         let block_end_info = if self
@@ -1385,7 +1399,7 @@ where
         let sequential_error = match sequential_result {
             Ok(output) => {
                 return Ok(output);
-            },
+            }
             Err(SequentialBlockExecutionError::ResourceGroupSerializationError) => {
                 if !self.config.local.allow_fallback {
                     panic!("Parallel execution failed and fallback is not allowed");
@@ -1408,15 +1422,15 @@ where
                 match sequential_result {
                     Ok(output) => {
                         return Ok(output);
-                    },
+                    }
                     Err(SequentialBlockExecutionError::ResourceGroupSerializationError) => {
                         BlockExecutionError::FatalBlockExecutorError(code_invariant_error(
                             "resource group serialization during bcs fallback should not happen",
                         ))
-                    },
+                    }
                     Err(SequentialBlockExecutionError::ErrorToReturn(err)) => err,
                 }
-            },
+            }
             Err(SequentialBlockExecutionError::ErrorToReturn(err)) => err,
         };
 
@@ -1427,10 +1441,10 @@ where
             let error_code = match sequential_error {
                 BlockExecutionError::FatalBlockExecutorError(_) => {
                     StatusCode::DELAYED_MATERIALIZATION_CODE_INVARIANT_ERROR
-                },
+                }
                 BlockExecutionError::FatalVMError(_) => {
                     StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR
-                },
+                }
             };
             let ret = signature_verified_block
                 .iter()

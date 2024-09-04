@@ -18,7 +18,7 @@ aptos-aggregator = { workspace = true }
 aptos-drop-helper = { workspace = true }
 aptos-infallible = { workspace = true }
 aptos-logger = { workspace = true }
-aptos-metrics-core = { workspace = true }
+aptos-metrics-core = { workspace = true, optional = true }
 aptos-mvhashmap = { workspace = true }
 aptos-types = { workspace = true }
 aptos-vm-logging = { workspace = true }
@@ -57,6 +57,7 @@ test-case = { workspace = true }
 
 [features]
 fuzzing = ["criterion", "proptest", "proptest-derive"]
+metrics = ["aptos-metrics-core"]
 
 [[bench]]
 name = "scheduler_benches"

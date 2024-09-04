@@ -3,12 +3,13 @@
 
 #[cfg(test)]
 use crate::types::InputOutputKey;
+#[cfg(feature = "metrics")]
+use crate::counters;
 use crate::{
     captured_reads::{
         CapturedReads, DataRead, DelayedFieldRead, DelayedFieldReadKind, GroupRead, ReadKind,
         UnsyncReadSet,
     },
-    counters,
     scheduler::{DependencyResult, DependencyStatus, Scheduler, TWaitForDependency},
     value_exchange::{
         does_value_need_exchange, filter_value_for_exchange, TemporaryValueToIdentifierMapping,
@@ -94,7 +95,7 @@ impl ReadResult {
             DataRead::Resolved(v) => {
                 // TODO[agg_v1](cleanup): Move AggV1 to Delayed fields, and then handle the layout if needed
                 ReadResult::Value(Some(StateValue::new_legacy(serialize(&v).into())), None)
-            },
+            }
             DataRead::Metadata(maybe_metadata) => ReadResult::Metadata(maybe_metadata),
             DataRead::Exists(exists) => ReadResult::Exists(exists),
         }
@@ -107,16 +108,16 @@ impl ReadResult {
         match (value, kind) {
             (ValueWithLayout::Exchanged(v, layout), ReadKind::Value) => {
                 Some(ReadResult::Value(v.as_state_value(), layout))
-            },
+            }
             (ValueWithLayout::RawFromStorage(_), ReadKind::Value) => None,
             (ValueWithLayout::Exchanged(v, _), ReadKind::Metadata)
             | (ValueWithLayout::RawFromStorage(v), ReadKind::Metadata) => {
                 Some(ReadResult::Metadata(v.as_state_value_metadata()))
-            },
+            }
             (ValueWithLayout::Exchanged(v, _), ReadKind::Exists)
             | (ValueWithLayout::RawFromStorage(v), ReadKind::Exists) => {
                 Some(ReadResult::Exists(!v.is_deletion()))
-            },
+            }
         }
     }
 
@@ -202,20 +203,20 @@ fn get_delayed_field_value_impl<T: Transaction>(
                     },
                 )?;
                 return Ok(value);
-            },
+            }
             Err(PanicOr::Or(MVDelayedFieldsError::Dependency(dep_idx))) => {
                 if !wait_for_dependency(wait_for, txn_idx, dep_idx)? {
                     // TODO[agg_v2](cleanup): think of correct return type
                     return Err(PanicOr::Or(DelayedFieldsSpeculativeError::InconsistentRead));
                 }
-            },
+            }
             Err(e) => {
                 captured_reads
                     .borrow_mut()
                     .capture_delayed_field_read_error(&e);
                 // TODO[agg_v2](cleanup): think of correct return type
                 return Err(e.map_non_panic(|_| DelayedFieldsSpeculativeError::InconsistentRead));
-            },
+            }
         }
     }
 }
@@ -242,7 +243,7 @@ fn compute_delayed_field_try_add_delta_outcome_from_history(
                 if let Some(overflow_delta) = overflow_delta {
                     history.record_overflow(overflow_delta);
                 }
-            },
+            }
             SignedU128::Negative(delta_value) => {
                 let underflow_delta = expect_ok(ok_overflow(
                     math.unsigned_add_delta(*delta_value, &base_delta.minus()),
@@ -251,7 +252,7 @@ fn compute_delayed_field_try_add_delta_outcome_from_history(
                 if let Some(underflow_delta) = underflow_delta {
                     history.record_underflow(underflow_delta);
                 }
-            },
+            }
         };
 
         false
@@ -282,10 +283,10 @@ fn compute_delayed_field_try_add_delta_outcome_first_time(
         match delta {
             SignedU128::Positive(delta_value) => {
                 history.record_overflow(*delta_value);
-            },
+            }
             SignedU128::Negative(delta_value) => {
                 history.record_underflow(*delta_value);
-            },
+            }
         };
         false
     } else {
@@ -326,12 +327,12 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                 math.unsigned_add_delta(value.clone().into_aggregator_value()?, base_delta),
             )?;
             Ok(math.unsigned_add_delta(before, delta).is_ok())
-        },
+        }
         Some(DelayedFieldRead::HistoryBounded {
-            restriction: history,
-            max_value: before_max_value,
-            inner_aggregator_value,
-        }) => {
+                 restriction: history,
+                 max_value: before_max_value,
+                 inner_aggregator_value,
+             }) => {
             if before_max_value != max_value {
                 return Err(
                     code_invariant_error("Cannot merge deltas with different limits").into(),
@@ -353,13 +354,13 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                 udpated_delayed_read,
             )?;
             Ok(result)
-        },
+        }
         None => {
             if !base_delta.is_zero() {
                 return Err(code_invariant_error(
                     "Passed-in delta is not zero, but CapturedReads has no record",
                 )
-                .into());
+                    .into());
             }
 
             let last_committed_value = loop {
@@ -376,13 +377,13 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                                 DelayedFieldsSpeculativeError::InconsistentRead,
                             ));
                         }
-                    },
+                    }
                     Err(_) => {
                         return Err(PanicOr::Or(DelayedFieldsSpeculativeError::InconsistentRead))
-                    },
+                    }
                 };
             }
-            .into_aggregator_value()?;
+                .into_aggregator_value()?;
 
             let (result, new_delayed_read) =
                 compute_delayed_field_try_add_delta_outcome_first_time(
@@ -395,7 +396,7 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                 .borrow_mut()
                 .capture_delayed_field_read(*id, false, new_delayed_read)?;
             Ok(result)
-        },
+        }
     }
 }
 
@@ -409,6 +410,7 @@ fn wait_for_dependency(
 ) -> Result<bool, PanicError> {
     match wait_for.wait_for_dependency(txn_idx, dep_idx)? {
         DependencyResult::Dependency(dep_condition) => {
+            #[cfg(feature = "metrics")]
             let _timer = counters::DEPENDENCY_WAIT_SECONDS.start_timer();
             // Wait on a condition variable corresponding to the encountered
             // read dependency. Once the dep_idx finishes re-execution, scheduler
@@ -431,7 +433,7 @@ fn wait_for_dependency(
             }
             // dep resolved status is either resolved or execution halted.
             Ok(matches!(*dep_resolved, DependencyStatus::Resolved))
-        },
+        }
         DependencyResult::ExecutionHalted => Ok(false),
         DependencyResult::Resolved => Ok(true),
     }
@@ -500,24 +502,24 @@ impl<'a, T: Transaction, X: Executable> ParallelState<'a, T, X> {
                     );
 
                     return Ok(GroupReadResult::Size(group_size));
-                },
+                }
                 Err(Uninitialized) => {
                     return Ok(GroupReadResult::Uninitialized);
-                },
+                }
                 Err(TagNotFound) => {
                     unreachable!("Reading group size does not require a specific tag look-up");
-                },
+                }
                 Err(Dependency(dep_idx)) => {
                     if !wait_for_dependency(self.scheduler, txn_idx, dep_idx)? {
                         return Err(PartialVMError::new(
                             StatusCode::SPECULATIVE_EXECUTION_ABORT_ERROR,
                         )
-                        .with_message("Interrupted as block execution was halted".to_string()));
+                            .with_message("Interrupted as block execution was halted".to_string()));
                     }
-                },
+                }
                 Err(TagSerializationError(e)) => {
                     return Err(e);
-                },
+                }
             }
         }
     }
@@ -567,14 +569,14 @@ impl<'a, T: Transaction, X: Executable> ResourceState<T> for ParallelState<'a, T
                                     );
                                     // Refetch in case a concurrent change went through.
                                     continue;
-                                },
+                                }
                                 Err(e) => {
                                     error!("Couldn't patch value from versioned map: {}", e);
                                     self.captured_reads.borrow_mut().mark_incorrect_use();
                                     return ReadResult::HaltSpeculativeExecution(
                                         "Couldn't patch value from versioned map".to_string(),
                                     );
-                                },
+                                }
                             }
                         }
                     }
@@ -589,7 +591,7 @@ impl<'a, T: Transaction, X: Executable> ResourceState<T> for ParallelState<'a, T
                             return ReadResult::HaltSpeculativeExecution(
                                 "Couldn't downcast value from versioned map".to_string(),
                             );
-                        },
+                        }
                     };
 
                     if self
@@ -605,7 +607,7 @@ impl<'a, T: Transaction, X: Executable> ResourceState<T> for ParallelState<'a, T
                     }
 
                     return ReadResult::from_data_read(data_read);
-                },
+                }
                 Ok(Resolved(value)) => {
                     let data_read = DataRead::Resolved(value)
                         .downcast(target_kind)
@@ -624,14 +626,14 @@ impl<'a, T: Transaction, X: Executable> ResourceState<T> for ParallelState<'a, T
                     }
 
                     return ReadResult::from_data_read(data_read);
-                },
+                }
                 Err(Uninitialized) | Err(Unresolved(_)) => {
                     // The underlying assumption here for not recording anything about the read is
                     // that the caller is expected to initialize the contents and serve the reads
                     // solely via the 'fetch_read' interface. Thus, the later, successful read,
                     // will make the needed recordings.
                     return ReadResult::Uninitialized;
-                },
+                }
                 Err(Dependency(dep_idx)) => {
                     match wait_for_dependency(self.scheduler, txn_idx, dep_idx) {
                         Err(e) => {
@@ -641,25 +643,25 @@ impl<'a, T: Transaction, X: Executable> ResourceState<T> for ParallelState<'a, T
                                 "Error {:?} in wait for dependency",
                                 e
                             ));
-                        },
+                        }
                         Ok(false) => {
                             self.captured_reads.borrow_mut().mark_failure();
                             return ReadResult::HaltSpeculativeExecution(
                                 "Interrupted as block execution was halted".to_string(),
                             );
-                        },
+                        }
                         Ok(true) => {
                             //dependency resolved
-                        },
+                        }
                     }
-                },
+                }
                 Err(DeltaApplicationFailure) => {
                     // AggregatorV1 may have delta application failure due to speculation.
                     self.captured_reads.borrow_mut().mark_failure();
                     return ReadResult::HaltSpeculativeExecution(
                         "Delta application failure (must be speculative)".to_string(),
                     );
-                },
+                }
             };
         }
     }
@@ -711,7 +713,7 @@ impl<'a, T: Transaction, X: Executable> ResourceGroupState<T> for ParallelState<
                                 );
                             // Re-fetch in case a concurrent change went through.
                             continue;
-                        },
+                        }
                         ValueWithLayout::Exchanged(value, layout) => {
                             let data_read =
                                 DataRead::Versioned(version, value.clone(), layout.clone());
@@ -727,12 +729,12 @@ impl<'a, T: Transaction, X: Executable> ResourceGroupState<T> for ParallelState<
                                 value.extract_raw_bytes(),
                                 layout.clone(),
                             ));
-                        },
+                        }
                     }
-                },
+                }
                 Err(Uninitialized) => {
                     return Ok(GroupReadResult::Uninitialized);
-                },
+                }
                 Err(TagNotFound) => {
                     let data_read = DataRead::Versioned(
                         Err(StorageVersion),
@@ -749,7 +751,7 @@ impl<'a, T: Transaction, X: Executable> ResourceGroupState<T> for ParallelState<
                     );
 
                     return Ok(GroupReadResult::Value(None, None));
-                },
+                }
                 Err(Dependency(dep_idx)) => {
                     if !wait_for_dependency(self.scheduler, txn_idx, dep_idx)? {
                         // TODO[agg_v2](cleanup): consider changing from PartialVMResult<GroupReadResult> to GroupReadResult
@@ -757,12 +759,12 @@ impl<'a, T: Transaction, X: Executable> ResourceGroupState<T> for ParallelState<
                         return Err(PartialVMError::new(
                             StatusCode::SPECULATIVE_EXECUTION_ABORT_ERROR,
                         )
-                        .with_message("Interrupted as block execution was halted".to_string()));
+                            .with_message("Interrupted as block execution was halted".to_string()));
                     }
-                },
+                }
                 Err(TagSerializationError(_)) => {
                     unreachable!("Reading a resource does not require tag serialization");
-                },
+                }
             }
         }
     }
@@ -829,7 +831,7 @@ impl<'a, T: Transaction, X: Executable> ResourceState<T> for SequentialState<'a,
 
                                 // sequential execution doesn't need to worry about concurrent change going through.
                                 value = exchanged_value;
-                            },
+                            }
                             Err(_) => {
                                 // TODO[agg_v2](cleanup): `patch_base_value` already marks as incorrect use
                                 //               and logs an error! We need to make this uniform across
@@ -839,7 +841,7 @@ impl<'a, T: Transaction, X: Executable> ResourceState<T> for SequentialState<'a,
                                 return ReadResult::HaltSpeculativeExecution(
                                     "Unsync map couldn't patch base value".to_string(),
                                 );
-                            },
+                            }
                         }
                     }
                 }
@@ -863,7 +865,7 @@ impl<'a, T: Transaction, X: Executable> ResourceState<T> for SequentialState<'a,
                             .to_string(),
                     )
                 }
-            },
+            }
             None => ReadResult::Uninitialized,
         }
     }
@@ -919,7 +921,7 @@ impl<'a, T: Transaction, X: Executable> ResourceGroupState<T> for SequentialStat
                     );
                     Ok(GroupReadResult::Uninitialized)
                 }
-            },
+            }
             Err(UnsyncGroupError::Uninitialized) => Ok(GroupReadResult::Uninitialized),
             Err(UnsyncGroupError::TagNotFound) => {
                 self.read_set
@@ -929,7 +931,7 @@ impl<'a, T: Transaction, X: Executable> ResourceGroupState<T> for SequentialStat
                     .or_default()
                     .insert(resource_tag.clone());
                 Ok(GroupReadResult::Value(None, None))
-            },
+            }
         }
     }
 }
@@ -960,13 +962,13 @@ impl<'a, T: Transaction, X: Executable> ViewState<'a, T, X> {
 /// all necessary traits, LatestView is provided to the VM and used to intercept the reads.
 /// In the Sync case, also records captured reads for later validation. latest_txn_idx
 /// must be set according to the latest transaction that the worker was / is executing.
-pub(crate) struct LatestView<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> {
+pub(crate) struct LatestView<'a, T: Transaction, S: TStateView<Key=T::Key>, X: Executable> {
     base_view: &'a S,
     pub(crate) latest_view: ViewState<'a, T, X>,
     txn_idx: TxnIndex,
 }
 
-impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<'a, T, S, X> {
+impl<'a, T: Transaction, S: TStateView<Key=T::Key>, X: Executable> LatestView<'a, T, S, X> {
     pub(crate) fn new(
         base_view: &'a S,
         latest_view: ViewState<'a, T, X>,
@@ -993,7 +995,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<
             ViewState::Sync(state) => state.captured_reads.take(),
             ViewState::Unsync(_) => {
                 unreachable!("Take reads called in sequential setting (not captured)")
-            },
+            }
         }
     }
 
@@ -1002,7 +1004,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<
         match &self.latest_view {
             ViewState::Sync(_) => {
                 unreachable!("Take unsync reads called in parallel setting")
-            },
+            }
             ViewState::Unsync(state) => state.read_set.take(),
         }
     }
@@ -1066,10 +1068,10 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<
                         return Err(PartialVMError::new(
                             StatusCode::DELAYED_MATERIALIZATION_CODE_INVARIANT_ERROR,
                         )
-                        .with_message(format!("{}", err)));
-                    },
+                            .with_message(format!("{}", err)));
+                    }
                 }
-            },
+            }
             (state_value, _) => state_value,
         };
         Ok(TransactionWrite::from_state_value(maybe_patched))
@@ -1150,7 +1152,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<
                             delayed_write_set_ids,
                             key,
                         )
-                    },
+                    }
                     Some(ValueWithLayout::Exchanged(_, None)) => None,
                     Some(ValueWithLayout::RawFromStorage(_)) => Some(Err(code_invariant_error(
                         "Cannot exchange value that was not exchanged before",
@@ -1189,7 +1191,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<
                             layout.as_ref(),
                             delayed_write_set_ids,
                         )
-                        .map_err(PartialVMError::from)?;
+                            .map_err(PartialVMError::from)?;
 
                         if needs_exchange {
                             resources_needing_delayed_field_exchange = true;
@@ -1205,20 +1207,20 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<
                     Some(metadata) => match parallel_state.read_group_size(&key, self.txn_idx)? {
                         GroupReadResult::Size(group_size) => {
                             Ok(Some((key, (metadata, group_size.get()))))
-                        },
+                        }
                         GroupReadResult::Value(_, _) | GroupReadResult::Uninitialized => {
                             Err(code_invariant_error(format!(
                                 "Cannot compute metadata op size for the group read {:?}",
                                 key
                             ))
-                            .into())
-                        },
+                                .into())
+                        }
                     },
                     None => Err(code_invariant_error(format!(
                         "Metadata op not present for the group read {:?}",
                         key
                     ))
-                    .into()),
+                        .into()),
                 }
             })
             .flat_map(Result::transpose)
@@ -1263,23 +1265,23 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<
                         Some(metadata) => match unsync_map.get_group_size(key)? {
                             GroupReadResult::Size(group_size) => {
                                 Ok(Some((key.clone(), (metadata, group_size.get()))))
-                            },
+                            }
                             GroupReadResult::Value(_, _) => {
                                 unreachable!(
                                     "get_group_size cannot return GroupReadResult::Value type"
                                 )
-                            },
+                            }
                             GroupReadResult::Uninitialized => Err(code_invariant_error(format!(
                                 "Sequential cannot find metadata op size for the group read {:?}",
                                 key
                             ))
-                            .into()),
+                                .into()),
                         },
                         None => Err(code_invariant_error(format!(
                             "Sequential cannot find metadata op for the group read {:?}",
                             key,
                         ))
-                        .into()),
+                            .into()),
                     }
                 } else {
                     Ok(None)
@@ -1339,11 +1341,11 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<
             ReadResult::HaltSpeculativeExecution(msg) => Err(PartialVMError::new(
                 StatusCode::SPECULATIVE_EXECUTION_ABORT_ERROR,
             )
-            .with_message(msg)),
+                .with_message(msg)),
             ReadResult::Uninitialized => Err(code_invariant_error(
                 "base value must already be recorded in the MV data structure",
             )
-            .into()),
+                .into()),
             ReadResult::Exists(_) | ReadResult::Metadata(_) | ReadResult::Value(_, _) => Ok(ret),
         }
     }
@@ -1384,8 +1386,8 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> LatestView<
     }
 }
 
-impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TResourceView
-    for LatestView<'a, T, S, X>
+impl<'a, T: Transaction, S: TStateView<Key=T::Key>, X: Executable> TResourceView
+for LatestView<'a, T, S, X>
 {
     type Key = T::Key;
     type Layout = MoveTypeLayout;
@@ -1400,7 +1402,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TResourceVi
             UnknownOrLayout::Known(maybe_layout),
             ReadKind::Value,
         )
-        .map(|res| res.into_value())
+            .map(|res| res.into_value())
     }
 
     fn get_resource_state_value_metadata(
@@ -1429,8 +1431,8 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TResourceVi
     }
 }
 
-impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TResourceGroupView
-    for LatestView<'a, T, S, X>
+impl<'a, T: Transaction, S: TStateView<Key=T::Key>, X: Executable> TResourceGroupView
+for LatestView<'a, T, S, X>
 {
     type GroupKey = T::Key;
     type Layout = MoveTypeLayout;
@@ -1522,8 +1524,8 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TResourceGr
     }
 }
 
-impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TModuleView
-    for LatestView<'a, T, S, X>
+impl<'a, T: Transaction, S: TStateView<Key=T::Key>, X: Executable> TModuleView
+for LatestView<'a, T, S, X>
 {
     type Key = T::Key;
 
@@ -1546,10 +1548,10 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TModuleView
                         // Return anything (e.g. module does not exist) to avoid waiting,
                         // because parallel execution will fall back to sequential anyway.
                         Ok(None)
-                    },
+                    }
                     Err(NotFound) => self.get_raw_base_value(state_key),
                 }
-            },
+            }
             ViewState::Unsync(state) => {
                 state
                     .read_set
@@ -1560,13 +1562,13 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TModuleView
                     || self.get_raw_base_value(state_key),
                     |v| Ok(v.as_state_value()),
                 )
-            },
+            }
         }
     }
 }
 
-impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> StateStorageView
-    for LatestView<'a, T, S, X>
+impl<'a, T: Transaction, S: TStateView<Key=T::Key>, X: Executable> StateStorageView
+for LatestView<'a, T, S, X>
 {
     fn id(&self) -> StateViewId {
         self.base_view.id()
@@ -1577,8 +1579,8 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> StateStorag
     }
 }
 
-impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TAggregatorV1View
-    for LatestView<'a, T, S, X>
+impl<'a, T: Transaction, S: TStateView<Key=T::Key>, X: Executable> TAggregatorV1View
+for LatestView<'a, T, S, X>
 {
     type Identifier = T::Key;
 
@@ -1595,8 +1597,8 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TAggregator
     }
 }
 
-impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TDelayedFieldView
-    for LatestView<'a, T, S, X>
+impl<'a, T: Transaction, S: TStateView<Key=T::Key>, X: Executable> TDelayedFieldView
+for LatestView<'a, T, S, X>
 {
     type Identifier = T::Identifier;
     type ResourceGroupTag = T::Tag;
@@ -1619,7 +1621,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TDelayedFie
                 Ok(state.unsync_map.fetch_delayed_field(id).ok_or_else(|| {
                     code_invariant_error(format!("DelayedField {:?} not found in get_delayed_field_value in sequential execution", id))
                 })?)
-            },
+            }
         }
     }
 
@@ -1656,7 +1658,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TDelayedFie
                 } else {
                     Ok(true)
                 }
-            },
+            }
         }
     }
 
@@ -1668,7 +1670,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TDelayedFie
                 let id = *counter;
                 *counter += 1;
                 id
-            },
+            }
         };
 
         (index, width).into()
@@ -1718,7 +1720,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TDelayedFie
                     delayed_write_set_ids,
                     skip,
                 )
-            },
+            }
         }
     }
 
@@ -1730,7 +1732,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TDelayedFie
         match &self.latest_view {
             ViewState::Sync(state) => {
                 self.get_group_reads_needing_exchange_parallel(state, delayed_write_set_ids, skip)
-            },
+            }
             ViewState::Unsync(state) => {
                 let read_set = state.read_set.borrow();
                 self.get_group_reads_needing_exchange_sequential(
@@ -1739,7 +1741,7 @@ impl<'a, T: Transaction, S: TStateView<Key = T::Key>, X: Executable> TDelayedFie
                     delayed_write_set_ids,
                     skip,
                 )
-            },
+            }
         }
     }
 }
@@ -2868,7 +2870,7 @@ mod test {
                         .collect::<BTreeMap<_, _>>()
                 }),
             )
-            .unwrap();
+                .unwrap();
             par
         }
 
@@ -2934,12 +2936,12 @@ mod test {
                     layout.as_ref().map(|v| v.as_ref()),
                     expected_maybe_layout.as_ref()
                 );
-            },
+            }
             Some(ValueWithLayout::RawFromStorage(_)) => panic!("Unexpected RawFromStorage"),
             None => {
                 assert_none!(expected_maybe_write);
                 assert_none!(expected_maybe_layout);
-            },
+            }
         }
     }
 
@@ -2990,11 +2992,11 @@ mod test {
                 views
                     .get_resource_state_value_metadata(&KeyType::<u32>(1, false))
                     .unwrap();
-            },
+            }
             Some(false) => {
                 assert_ok_eq!(views.resource_exists(&KeyType::<u32>(1, false)), true,);
-            },
-            None => {},
+            }
+            None => {}
         };
 
         let layout = create_struct_layout(create_aggregator_layout_u64());

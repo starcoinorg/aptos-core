@@ -1,7 +1,10 @@
 // Copyright © Aptos Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{counters, types::ReadWriteSummary};
+#[cfg(feature = "metrics")]
+use crate::counters;
+
+use crate::{types::ReadWriteSummary};
 use aptos_logger::info;
 use aptos_types::{
     fee_statement::FeeStatement,
@@ -77,11 +80,11 @@ impl<T: Transaction> BlockGasLimitProcessor<T> {
         // the per block gas limit, as we measure execution related cost here.
         self.accumulated_effective_block_gas += conflict_multiplier
             * (fee_statement.execution_gas_used()
-                * self
-                    .block_gas_limit_type
-                    .execution_gas_effective_multiplier()
-                + fee_statement.io_gas_used()
-                    * self.block_gas_limit_type.io_gas_effective_multiplier());
+            * self
+            .block_gas_limit_type
+            .execution_gas_effective_multiplier()
+            + fee_statement.io_gas_used()
+            * self.block_gas_limit_type.io_gas_effective_multiplier());
 
         if self.block_gas_limit_type.block_output_limit().is_some() {
             self.accumulated_approx_output_size += approx_output_size
@@ -94,8 +97,8 @@ impl<T: Transaction> BlockGasLimitProcessor<T> {
     pub(crate) fn process_module_rw_conflict(&mut self) {
         if self.module_rw_conflict
             || !self
-                .block_gas_limit_type
-                .use_module_publishing_block_conflict()
+            .block_gas_limit_type
+            .use_module_publishing_block_conflict()
         {
             return;
         }
@@ -110,11 +113,11 @@ impl<T: Transaction> BlockGasLimitProcessor<T> {
 
         self.accumulated_effective_block_gas = conflict_multiplier as u64
             * (self.accumulated_fee_statement.execution_gas_used()
-                * self
-                    .block_gas_limit_type
-                    .execution_gas_effective_multiplier()
-                + self.accumulated_fee_statement.io_gas_used()
-                    * self.block_gas_limit_type.io_gas_effective_multiplier());
+            * self
+            .block_gas_limit_type
+            .execution_gas_effective_multiplier()
+            + self.accumulated_fee_statement.io_gas_used()
+            * self.block_gas_limit_type.io_gas_effective_multiplier());
         self.module_rw_conflict = true;
     }
 
@@ -124,6 +127,7 @@ impl<T: Transaction> BlockGasLimitProcessor<T> {
             // PER_BLOCK_GAS_LIMIT, early halt BlockSTM.
             let accumulated_block_gas = self.get_effective_accumulated_block_gas();
             if accumulated_block_gas >= per_block_gas_limit {
+                #[cfg(feature = "metrics")]
                 counters::EXCEED_PER_BLOCK_GAS_LIMIT_COUNT
                     .with_label_values(&[mode])
                     .inc();
@@ -139,6 +143,7 @@ impl<T: Transaction> BlockGasLimitProcessor<T> {
         if let Some(per_block_output_limit) = self.block_gas_limit_type.block_output_limit() {
             let accumulated_output = self.get_accumulated_approx_output_size();
             if accumulated_output >= per_block_output_limit {
+                #[cfg(feature = "metrics")]
                 counters::EXCEED_PER_BLOCK_OUTPUT_LIMIT_COUNT
                     .with_label_values(&[mode])
                     .inc();
@@ -155,11 +160,11 @@ impl<T: Transaction> BlockGasLimitProcessor<T> {
     }
 
     pub(crate) fn should_end_block_parallel(&mut self) -> bool {
-        self.should_end_block(counters::Mode::PARALLEL)
+        self.should_end_block("PARALLEL")
     }
 
     pub(crate) fn should_end_block_sequential(&mut self) -> bool {
-        self.should_end_block(counters::Mode::SEQUENTIAL)
+        self.should_end_block("SEQUENTIAL")
     }
 
     fn get_effective_accumulated_block_gas(&self) -> u64 {
@@ -198,6 +203,7 @@ impl<T: Transaction> BlockGasLimitProcessor<T> {
         let accumulated_effective_block_gas = self.get_effective_accumulated_block_gas();
         let accumulated_approx_output_size = self.get_accumulated_approx_output_size();
 
+        #[cfg(feature = "metrics")]
         counters::update_block_gas_counters(
             &self.accumulated_fee_statement,
             accumulated_effective_block_gas,
@@ -205,6 +211,7 @@ impl<T: Transaction> BlockGasLimitProcessor<T> {
             num_committed as usize,
             is_parallel,
         );
+        #[cfg(feature = "metrics")]
         counters::update_txn_gas_counters(&self.txn_fee_statements, is_parallel);
 
         info!(
