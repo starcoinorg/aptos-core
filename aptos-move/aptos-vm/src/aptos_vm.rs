@@ -2,9 +2,14 @@
 // Parts of the project are originally copyright © Meta Platforms, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "metrics")]
+use {
+    crate::counters::*,
+    aptos_metrics_core::TimerHelper,
+};
+
 use crate::{
     block_executor::{AptosTransactionOutput, BlockAptosVM},
-    counters::*,
     data_cache::{AsMoveResolver, StorageAdapter},
     errors::{discarded_output, expect_only_successful_execution},
     gas::{check_gas, get_gas_parameters, make_prod_gas_meter, ProdGasMeter},
@@ -37,7 +42,6 @@ use aptos_gas_algebra::{Gas, GasQuantity, NumBytes, Octa};
 use aptos_gas_meter::{AptosGasMeter, GasAlgebra};
 use aptos_gas_schedule::{AptosGasParameters, VMGasParameters};
 use aptos_logger::{enabled, prelude::*, Level};
-use aptos_metrics_core::TimerHelper;
 #[cfg(any(test, feature = "testing"))]
 use aptos_types::state_store::StateViewId;
 use aptos_types::{
@@ -161,8 +165,8 @@ pub(crate) fn get_system_transaction_output(
             e.with_message(
                 "Non-empty module write set in when creating system transaction output".to_string(),
             )
-            .finish(Location::Undefined)
-            .into_vm_status()
+                .finish(Location::Undefined)
+                .into_vm_status()
         })?;
 
     Ok(VMOutput::new(
@@ -201,7 +205,7 @@ fn is_approved_gov_script(
                     .any(|(_, hash)| hash == &txn_metadata.script_hash),
                 None => false,
             }
-        },
+        }
         _ => false,
     }
 }
@@ -237,6 +241,7 @@ impl AptosVM {
         state_view: &impl StateView,
         inject_create_signer_for_gov_sim: bool,
     ) -> Self {
+        #[cfg(feature = "metrics")]
         let _timer = TIMER.timer_with(&["AptosVM::new"]);
 
         let (gas_params, storage_gas_params, gas_feature_version) =
@@ -482,11 +487,11 @@ impl AptosVM {
                     )
                     .unwrap_or_else(|status| discarded_output(status.status_code()));
                 (error_vm_status, output)
-            },
+            }
             TransactionStatus::Discard(status_code) => {
                 let discarded_output = discarded_output(status_code);
                 (error_vm_status, discarded_output)
-            },
+            }
             TransactionStatus::Retry => unreachable!(),
         }
     }
@@ -506,7 +511,7 @@ impl AptosVM {
                     code,
                     info,
                 }
-            },
+            }
             _ => status,
         }
     }
@@ -541,24 +546,24 @@ impl AptosVM {
                         txn_data.sender(),
                         traversal_context,
                     )
-                    // If this fails, it is likely due to out of gas, so we try again without metering
-                    // and then validate below that we charged sufficiently.
-                    .or_else(|_err| {
-                        create_account_if_does_not_exist(
-                            session,
-                            &mut UnmeteredGasMeter,
-                            txn_data.sender(),
-                            traversal_context,
-                        )
-                    })
-                    .map_err(expect_no_verification_errors)
-                    .or_else(|err| {
-                        expect_only_successful_execution(
-                            err,
-                            &format!("{:?}::{}", ACCOUNT_MODULE, CREATE_ACCOUNT_IF_DOES_NOT_EXIST),
-                            log_context,
-                        )
-                    })
+                        // If this fails, it is likely due to out of gas, so we try again without metering
+                        // and then validate below that we charged sufficiently.
+                        .or_else(|_err| {
+                            create_account_if_does_not_exist(
+                                session,
+                                &mut UnmeteredGasMeter,
+                                txn_data.sender(),
+                                traversal_context,
+                            )
+                        })
+                        .map_err(expect_no_verification_errors)
+                        .or_else(|err| {
+                            expect_only_successful_execution(
+                                err,
+                                &format!("{:?}::{}", ACCOUNT_MODULE, CREATE_ACCOUNT_IF_DOES_NOT_EXIST),
+                                log_context,
+                            )
+                        })
                 })?;
 
                 let mut abort_hook_session_change_set =
@@ -750,7 +755,7 @@ impl AptosVM {
                     .with_message(msg)
                     .finish(Location::Script);
                 return Err(partial_err.into_vm_status());
-            },
+            }
         };
 
         // Check that unstable bytecode cannot be executed on mainnet
@@ -883,7 +888,7 @@ impl AptosVM {
                         script,
                     )
                 })?;
-            },
+            }
             TransactionPayload::EntryFunction(entry_fn) => {
                 session.execute(|session| {
                     self.validate_and_execute_entry_function(
@@ -896,7 +901,7 @@ impl AptosVM {
                         txn_data,
                     )
                 })?;
-            },
+            }
 
             // Not reachable as this function should only be invoked for entry or script
             // transaction payload.
@@ -1033,9 +1038,9 @@ impl AptosVM {
                                 has_modules_published_to_special_address,
                             )
                         })
-                    },
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -1178,7 +1183,7 @@ impl AptosVM {
                     traversal_context,
                 )?;
                 (epilogue_session, false)
-            },
+            }
             Ok(user_session_change_set) => {
                 let has_modules_published_to_special_address =
                     user_session_change_set.has_modules_published_to_special_address();
@@ -1205,7 +1210,7 @@ impl AptosVM {
                         .map_err(|e| e.into_vm_status())
                 })?;
                 (epilogue_session, has_modules_published_to_special_address)
-            },
+            }
         };
 
         // TODO(Gas): Charge for aggregator writes
@@ -1396,11 +1401,11 @@ impl AptosVM {
             ) {
                 Ok(module) => {
                     result.push(module);
-                },
+                }
                 Err(_err) => {
                     return Err(PartialVMError::new(StatusCode::CODE_DESERIALIZATION_ERROR)
                         .finish(Location::Undefined))
-                },
+                }
             }
         }
         Ok(result)
@@ -1512,7 +1517,7 @@ impl AptosVM {
                         move_binary_format::check_complexity::check_module_complexity(
                             module, budget,
                         )
-                        .map_err(|err| err.finish(Location::Undefined))?;
+                            .map_err(|err| err.finish(Location::Undefined))?;
                     }
                 }
 
@@ -1833,13 +1838,14 @@ impl AptosVM {
             // validator can craft this transaction and cause the node to panic.
             TransactionPayload::ModuleBundle(_) => {
                 unwrap_or_discard!(Err(deprecated_module_bundle!()))
-            },
+            }
         };
 
         let gas_usage = txn_data
             .max_gas_amount()
             .checked_sub(gas_meter.balance())
             .expect("Balance should always be less than or equal to max gas amount set");
+        #[cfg(feature = "metrics")]
         TXN_GAS_USAGE.observe(u64::from(gas_usage) as f64);
 
         result.unwrap_or_else(|err| {
@@ -1949,7 +1955,7 @@ impl AptosVM {
             Err(vm_status) => {
                 let vm_output = discarded_output(vm_status.status_code());
                 (vm_status, vm_output)
-            },
+            }
         }
     }
 
@@ -1982,7 +1988,7 @@ impl AptosVM {
                 }
 
                 Ok((change_set, module_write_set))
-            },
+            }
             WriteSetPayload::Script { script, execute_as } => {
                 let mut tmp_session = self.new_session(resolver, session_id, None);
                 let senders = match txn_sender {
@@ -2008,7 +2014,7 @@ impl AptosVM {
                 //               code context instead.
                 let (change_set, module_write_set) = tmp_session.finish(&change_set_configs)?;
                 Ok((change_set, module_write_set))
-            },
+            }
         }
     }
 
@@ -2088,8 +2094,9 @@ impl AptosVM {
             &change_set,
             &module_write_set,
         )
-        .map_err(|e| e.finish(Location::Undefined).into_vm_status())?;
+            .map_err(|e| e.finish(Location::Undefined).into_vm_status())?;
 
+        #[cfg(feature = "metrics")]
         SYSTEM_TRANSACTIONS_EXECUTED.inc();
 
         let output = VMOutput::new(
@@ -2136,6 +2143,7 @@ impl AptosVM {
             .or_else(|e| {
                 expect_only_successful_execution(e, BLOCK_PROLOGUE.as_str(), log_context)
             })?;
+        #[cfg(feature = "metrics")]
         SYSTEM_TRANSACTIONS_EXECUTED.inc();
 
         let output = get_system_transaction_output(
@@ -2215,6 +2223,7 @@ impl AptosVM {
             .or_else(|e| {
                 expect_only_successful_execution(e, BLOCK_PROLOGUE_EXT.as_str(), log_context)
             })?;
+        #[cfg(feature = "metrics")]
         SYSTEM_TRANSACTIONS_EXECUTED.inc();
 
         let output = get_system_transaction_output(
@@ -2248,14 +2257,14 @@ impl AptosVM {
             Ok(gas_params) => gas_params.vm.clone(),
             Err(err) => {
                 return ViewFunctionOutput::new(Err(anyhow::Error::msg(format!("{}", err))), 0)
-            },
+            }
         };
         let storage_gas_params =
             match get_or_vm_startup_failure(&vm.storage_gas_params, &log_context) {
                 Ok(gas_params) => gas_params.clone(),
                 Err(err) => {
                     return ViewFunctionOutput::new(Err(anyhow::Error::msg(format!("{}", err))), 0)
-                },
+                }
             };
 
         let mut gas_meter = make_prod_gas_meter(
@@ -2357,7 +2366,7 @@ impl AptosVM {
                     log_context,
                     traversal_context,
                 )
-            },
+            }
             TransactionPayload::Multisig(multisig_payload) => {
                 // Still run script prologue for multisig transaction to ensure the same tx
                 // validations are still run for this multisig execution tx, which is submitted by
@@ -2383,7 +2392,7 @@ impl AptosVM {
                 } else {
                     Ok(())
                 }
-            },
+            }
 
             // Deprecated.
             TransactionPayload::ModuleBundle(_) => Err(deprecated_module_bundle!()),
@@ -2420,7 +2429,7 @@ impl AptosVM {
                 let (vm_status, output) =
                     self.process_block_prologue(resolver, block_metadata.clone(), log_context)?;
                 (vm_status, output)
-            },
+            }
             Transaction::BlockMetadataExt(block_metadata_ext) => {
                 fail_point!("aptos_vm::execution::block_metadata_ext");
                 let (vm_status, output) = self.process_block_prologue_ext(
@@ -2429,7 +2438,7 @@ impl AptosVM {
                     log_context,
                 )?;
                 (vm_status, output)
-            },
+            }
             Transaction::GenesisTransaction(write_set_payload) => {
                 let (vm_status, output) = self.process_waypoint_change_set(
                     resolver,
@@ -2437,9 +2446,10 @@ impl AptosVM {
                     log_context,
                 )?;
                 (vm_status, output)
-            },
+            }
             Transaction::UserTransaction(txn) => {
                 fail_point!("aptos_vm::execution::user_transaction");
+                #[cfg(feature = "metrics")]
                 let _timer = TXN_TOTAL_SECONDS.start_timer();
                 let (vm_status, output) = self.execute_user_transaction(resolver, txn, log_context);
 
@@ -2448,7 +2458,7 @@ impl AptosVM {
                         // Type resolution failure can be triggered by user input when providing a bad type argument, skip this case.
                         StatusCode::TYPE_RESOLUTION_FAILURE
                         if vm_status.sub_status()
-                            == Some(move_core_types::vm_status::sub_status::type_resolution_failure::EUSER_TYPE_LOADING_FAILURE) => {},
+                            == Some(move_core_types::vm_status::sub_status::type_resolution_failure::EUSER_TYPE_LOADING_FAILURE) => {}
                         // The known Move function failure and type resolution failure could be a result of speculative execution. Use speculative logger.
                         StatusCode::UNEXPECTED_ERROR_FROM_KNOWN_MOVE_FUNCTION
                         | StatusCode::TYPE_RESOLUTION_FAILURE => {
@@ -2460,7 +2470,7 @@ impl AptosVM {
                                     vm_status
                                 ),
                             );
-                        },
+                        }
                         // Paranoid mode failure. We need to be alerted about this ASAP.
                         StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR
                         if vm_status.sub_status()
@@ -2472,7 +2482,7 @@ impl AptosVM {
                                 bcs::to_bytes::<SignedTransaction>(txn),
                                 vm_status,
                             );
-                            },
+                            }
                         // Paranoid mode failure but with reference counting
                         StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR
                         if vm_status.sub_status()
@@ -2484,7 +2494,7 @@ impl AptosVM {
                                 bcs::to_bytes::<SignedTransaction>(txn),
                                 vm_status,
                             );
-                            },
+                            }
                         // Ignore DelayedFields speculative errors as it can be intentionally triggered by parallel execution.
                         StatusCode::SPECULATIVE_EXECUTION_ABORT_ERROR => (),
                         // We will log the rest of invariant violation directly with regular logger as they shouldn't happen.
@@ -2497,7 +2507,7 @@ impl AptosVM {
                                 bcs::to_bytes::<SignedTransaction>(txn),
                                 vm_status,
                             );
-                        },
+                        }
                     }
                 }
 
@@ -2508,25 +2518,26 @@ impl AptosVM {
                     TransactionStatus::Retry => None,
                 };
                 if let Some(label) = counter_label {
+                    #[cfg(feature = "metrics")]
                     USER_TRANSACTIONS_EXECUTED.with_label_values(&[label]).inc();
                 }
                 (vm_status, output)
-            },
+            }
             Transaction::StateCheckpoint(_) => {
                 let status = TransactionStatus::Keep(ExecutionStatus::Success);
                 let output = VMOutput::empty_with_status(status);
                 (VMStatus::Executed, output)
-            },
+            }
             Transaction::BlockEpilogue(_) => {
                 let status = TransactionStatus::Keep(ExecutionStatus::Success);
                 let output = VMOutput::empty_with_status(status);
                 (VMStatus::Executed, output)
-            },
+            }
             Transaction::ValidatorTransaction(txn) => {
                 let (vm_status, output) =
                     self.process_validator_transaction(resolver, txn.clone(), log_context)?;
                 (vm_status, output)
-            },
+            }
         })
     }
 }
@@ -2575,6 +2586,7 @@ impl VMExecutor for AptosVM {
         );
         if ret.is_ok() {
             // Record the histogram count for transactions per block.
+            #[cfg(feature = "metrics")]
             BLOCK_TRANSACTION_COUNT.observe(count as f64);
         }
         ret
@@ -2602,6 +2614,7 @@ impl VMExecutor for AptosVM {
         );
         if ret.is_ok() {
             // Record the histogram count for transactions per block.
+            #[cfg(feature = "metrics")]
             BLOCK_TRANSACTION_COUNT.observe(count as f64);
         }
         ret
@@ -2625,6 +2638,7 @@ impl VMValidator for AptosVM {
         transaction: SignedTransaction,
         state_view: &impl StateView,
     ) -> VMValidatorResult {
+        #[cfg(feature = "metrics")]
         let _timer = TXN_VALIDATION_SECONDS.start_timer();
         let log_context = AdapterLogSchema::new(state_view.id(), 0);
 
@@ -2632,7 +2646,7 @@ impl VMValidator for AptosVM {
             .features()
             .is_enabled(FeatureFlag::SINGLE_SENDER_AUTHENTICATOR)
         {
-            if let aptos_types::transaction::authenticator::TransactionAuthenticator::SingleSender{ .. } = transaction.authenticator_ref() {
+            if let aptos_types::transaction::authenticator::TransactionAuthenticator::SingleSender { .. } = transaction.authenticator_ref() {
                 return VMValidatorResult::error(StatusCode::FEATURE_UNDER_GATING);
             }
         }
@@ -2669,7 +2683,7 @@ impl VMValidator for AptosVM {
             Ok(t) => t,
             _ => {
                 return VMValidatorResult::error(StatusCode::INVALID_SIGNATURE);
-            },
+            }
         };
         let txn_data = TransactionMetadata::new(&txn);
 
@@ -2704,6 +2718,7 @@ impl VMValidator for AptosVM {
             ),
         };
 
+        #[cfg(feature = "metrics")]
         TRANSACTIONS_VALIDATED
             .with_label_values(&[counter_label])
             .inc();
@@ -2781,14 +2796,14 @@ pub(crate) fn is_account_init_for_sponsored_transaction(
             && txn_data.fee_payer.is_some()
             && txn_data.sequence_number == 0
             && resolver
-                .get_resource_bytes_with_metadata_and_layout(
-                    &txn_data.sender(),
-                    &AccountResource::struct_tag(),
-                    &resolver.get_module_metadata(&AccountResource::struct_tag().module_id()),
-                    None,
-                )
-                .map(|(data, _)| data.is_none())
-                .map_err(|e| e.finish(Location::Undefined))?,
+            .get_resource_bytes_with_metadata_and_layout(
+                &txn_data.sender(),
+                &AccountResource::struct_tag(),
+                &resolver.get_module_metadata(&AccountResource::struct_tag().module_id()),
+                None,
+            )
+            .map(|(data, _)| data.is_none())
+            .map_err(|e| e.finish(Location::Undefined))?,
     )
 }
 

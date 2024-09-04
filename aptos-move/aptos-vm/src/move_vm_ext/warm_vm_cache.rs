@@ -3,10 +3,12 @@
 
 #![forbid(unsafe_code)]
 
-use crate::{counters::TIMER, move_vm_ext::AptosMoveResolver, natives::aptos_natives_with_builder};
+#[cfg(feature = "metrics")]
+use {crate::counters::TIMER, aptos_metrics_core::TimerHelper};
+
+use crate::{move_vm_ext::AptosMoveResolver, natives::aptos_natives_with_builder};
 use aptos_framework::natives::code::PackageRegistry;
 use aptos_infallible::RwLock;
-use aptos_metrics_core::TimerHelper;
 use aptos_native_interface::SafeNativeBuilder;
 use aptos_types::{on_chain_config::OnChainConfig, state_store::state_key::StateKey};
 use bytes::Bytes;
@@ -59,8 +61,10 @@ impl WarmVmCache {
         bin_v7_enabled: bool,
         inject_create_signer_for_gov_sim: bool,
     ) -> VMResult<MoveVM> {
+        #[cfg(feature = "metrics")]
         let _timer = TIMER.timer_with(&["warm_vm_get"]);
         let id = {
+            #[cfg(feature = "metrics")]
             let _timer = TIMER.timer_with(&["get_warm_vm_id"]);
             WarmVmId::new(
                 &native_builder,
@@ -72,11 +76,13 @@ impl WarmVmCache {
         };
 
         if let Some(vm) = self.cache.read().get(&id) {
+            #[cfg(feature = "metrics")]
             let _timer = TIMER.timer_with(&["warm_vm_cache_hit"]);
             return Ok(vm.clone());
         }
 
         {
+            #[cfg(feature = "metrics")]
             let _timer = TIMER.timer_with(&["warm_vm_cache_miss"]);
             let mut cache_locked = self.cache.write();
             if let Some(vm) = cache_locked.get(&id) {
@@ -100,6 +106,7 @@ impl WarmVmCache {
     }
 
     fn warm_vm_up(vm: &MoveVM, resolver: &impl AptosMoveResolver) {
+        #[cfg(feature = "metrics")]
         let _timer = TIMER.timer_with(&["vm_warm_up"]);
 
         // Loading `0x1::account` and its transitive dependency into the code cache.
@@ -134,6 +141,7 @@ impl WarmVmId {
         inject_create_signer_for_gov_sim: bool,
     ) -> VMResult<Self> {
         let natives = {
+            #[cfg(feature = "metrics")]
             let _timer = TIMER.timer_with(&["serialize_native_builder"]);
             native_builder.id_bytes()
         };
@@ -147,6 +155,7 @@ impl WarmVmId {
     }
 
     fn vm_config_bytes(vm_config: &VMConfig) -> Bytes {
+        #[cfg(feature = "metrics")]
         let _timer = TIMER.timer_with(&["serialize_vm_config"]);
         bcs::to_bytes(vm_config)
             .expect("Failed to serialize VMConfig.")
@@ -155,6 +164,7 @@ impl WarmVmId {
 
     fn core_packages_id_bytes(resolver: &impl AptosMoveResolver) -> VMResult<Option<Bytes>> {
         let bytes = {
+            #[cfg(feature = "metrics")]
             let _timer = TIMER.timer_with(&["fetch_pkgreg"]);
             resolver.fetch_config_bytes(&StateKey::on_chain_config::<PackageRegistry>().map_err(
                 |err| {
@@ -166,6 +176,7 @@ impl WarmVmId {
         };
 
         let core_package_registry = {
+            #[cfg(feature = "metrics")]
             let _timer = TIMER.timer_with(&["deserialize_pkgreg"]);
             bytes
                 .as_ref()
@@ -179,6 +190,7 @@ impl WarmVmId {
         };
 
         {
+            #[cfg(feature = "metrics")]
             let _timer = TIMER.timer_with(&["ensure_no_ext_deps"]);
             core_package_registry
                 .as_ref()

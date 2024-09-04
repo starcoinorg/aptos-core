@@ -4,10 +4,10 @@
 
 pub(crate) mod vm_wrapper;
 
-use crate::{
-    block_executor::vm_wrapper::AptosExecutorTask,
-    counters::{BLOCK_EXECUTOR_CONCURRENCY, BLOCK_EXECUTOR_EXECUTE_BLOCK_SECONDS},
-};
+#[cfg(feature = "metrics")]
+use crate::counters::{BLOCK_EXECUTOR_CONCURRENCY, BLOCK_EXECUTOR_EXECUTE_BLOCK_SECONDS};
+
+use crate::block_executor::vm_wrapper::AptosExecutorTask;
 use aptos_aggregator::{
     delayed_change::DelayedChange, delta_change_set::DeltaOp, resolver::TAggregatorV1View,
 };
@@ -175,7 +175,7 @@ impl BlockExecutorTransactionOutput for AptosTransactionOutput {
             .flat_map(|(key, write)| match write {
                 AbstractResourceWriteOp::Write(write_op) => {
                     Some((key.clone(), Arc::new(write_op.clone()), None))
-                },
+                }
                 AbstractResourceWriteOp::WriteWithDelayedFields(write) => Some((
                     key.clone(),
                     Arc::new(write.write_op.clone()),
@@ -276,7 +276,7 @@ impl BlockExecutorTransactionOutput for AptosTransactionOutput {
             .to_vec()
     }
 
-    fn materialize_agg_v1(&self, view: &impl TAggregatorV1View<Identifier = StateKey>) {
+    fn materialize_agg_v1(&self, view: &impl TAggregatorV1View<Identifier=StateKey>) {
         self.vm_output
             .lock()
             .as_mut()
@@ -358,18 +358,18 @@ impl BlockExecutorTransactionOutput for AptosTransactionOutput {
                 AbstractResourceWriteOp::Write(_)
                 | AbstractResourceWriteOp::WriteWithDelayedFields(_) => {
                     writes.insert(InputOutputKey::Resource(state_key.clone()));
-                },
+                }
                 AbstractResourceWriteOp::WriteResourceGroup(write) => {
                     for tag in write.inner_ops().keys() {
                         writes.insert(InputOutputKey::Group(state_key.clone(), tag.clone()));
                     }
-                },
+                }
                 AbstractResourceWriteOp::InPlaceDelayedFieldChange(_)
                 | AbstractResourceWriteOp::ResourceGroupInPlaceDelayedFieldChange(_) => {
                     // No conflicts on resources from in-place delayed field changes.
                     // Delayed fields conflicts themselves are handled via
                     // delayed_field_change_set below.
-                },
+                }
             }
         }
 
@@ -386,7 +386,7 @@ pub struct BlockAptosVM;
 impl BlockAptosVM {
     pub fn execute_block_on_thread_pool<
         S: StateView + Sync,
-        L: TransactionCommitHook<Output = AptosTransactionOutput>,
+        L: TransactionCommitHook<Output=AptosTransactionOutput>,
     >(
         executor_thread_pool: Arc<ThreadPool>,
         signature_verified_block: &[SignatureVerifiedTransaction],
@@ -394,6 +394,7 @@ impl BlockAptosVM {
         config: BlockExecutorConfig,
         transaction_commit_listener: Option<L>,
     ) -> Result<BlockOutput<TransactionOutput>, VMStatus> {
+        #[cfg(feature = "metrics")]
         let _timer = BLOCK_EXECUTOR_EXECUTE_BLOCK_SECONDS.start_timer();
         let num_txns = signature_verified_block.len();
         if state_view.id() != StateViewId::Miscellaneous {
@@ -402,6 +403,7 @@ impl BlockAptosVM {
             init_speculative_logs(num_txns);
         }
 
+        #[cfg(feature = "metrics")]
         BLOCK_EXECUTOR_CONCURRENCY.set(config.local.concurrency_level as i64);
         let executor = BlockExecutor::<
             SignatureVerifiedTransaction,
@@ -432,10 +434,10 @@ impl BlockAptosVM {
                 }
 
                 Ok(BlockOutput::new(output_vec, block_end_info))
-            },
+            }
             Err(BlockExecutionError::FatalBlockExecutorError(PanicError::CodeInvariantError(
-                err_msg,
-            ))) => Err(VMStatus::Error {
+                                                                 err_msg,
+                                                             ))) => Err(VMStatus::Error {
                 status_code: StatusCode::DELAYED_MATERIALIZATION_CODE_INVARIANT_ERROR,
                 sub_status: None,
                 message: Some(err_msg),
@@ -447,7 +449,7 @@ impl BlockAptosVM {
     /// Uses shared thread pool to execute blocks.
     pub fn execute_block<
         S: StateView + Sync,
-        L: TransactionCommitHook<Output = AptosTransactionOutput>,
+        L: TransactionCommitHook<Output=AptosTransactionOutput>,
     >(
         signature_verified_block: &[SignatureVerifiedTransaction],
         state_view: &S,

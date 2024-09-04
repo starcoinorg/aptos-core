@@ -27,7 +27,7 @@ aptos-gas-schedule = { workspace = true }
 aptos-infallible = { workspace = true }
 aptos-logger = { workspace = true }
 aptos-memory-usage-tracker = { workspace = true }
-aptos-metrics-core = { workspace = true }
+aptos-metrics-core = { workspace = true , optional = true }
 aptos-move-stdlib = { workspace = true }
 aptos-mvhashmap = { workspace = true }
 aptos-native-interface = { workspace = true }
@@ -68,6 +68,7 @@ rand_core = { workspace = true }
 
 [features]
 default = []
+metrics = ["aptos-metrics-core"]
 fuzzing = ["move-core-types/fuzzing", "move-binary-format/fuzzing", "move-vm-types/fuzzing", "aptos-framework/fuzzing", "aptos-types/fuzzing"]
 failpoints = ["fail/failpoints", "move-vm-runtime/failpoints"]
 testing = ["move-unit-test", "aptos-framework/testing"]

@@ -102,6 +102,7 @@
 //!             +-----------------------------+
 //! ```
 
+#[cfg(feature = "metrics")]
 #[macro_use]
 pub mod counters;
 pub mod data_cache;
