@@ -1,18 +1,22 @@
 // Copyright © Aptos Foundation
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "metrics")]
 pub mod counters;
 pub mod log_schema;
 
 pub mod prelude {
+    #[cfg(feature = "metrics")]
+    pub use crate::counters::CRITICAL_ERRORS;
     pub use crate::{
-        alert, counters::CRITICAL_ERRORS, disable_speculative_logging, speculative_debug,
+        alert, disable_speculative_logging, speculative_debug,
         speculative_error, speculative_info, speculative_log, speculative_trace, speculative_warn,
     };
 }
 
+#[cfg(feature = "metrics")]
+use crate::counters::{CRITICAL_ERRORS, SPECULATIVE_LOGGING_ERRORS};
 use crate::{
-    counters::{CRITICAL_ERRORS, SPECULATIVE_LOGGING_ERRORS},
     log_schema::AdapterLogSchema,
 };
 use aptos_logger::{prelude::*, Level};
@@ -49,7 +53,7 @@ impl SpeculativeEvent for VMLogEntry {
                 // TODO: Consider using SpeculativeCounter to increase CRITICAL_ERRORS
                 // on the critical path instead of async dispatching.
                 alert!(self.context, "{}", self.message);
-            },
+            }
             Level::Warn => warn!(self.context, "{}", self.message),
             Level::Info => info!(self.context, "{}", self.message),
             Level::Debug => debug!(self.context, "{}", self.message),
@@ -105,13 +109,13 @@ pub fn speculative_log(level: Level, context: &AdapterLogSchema, message: String
                 if let Err(e) = log_events.record(txn_idx, log_event) {
                     speculative_alert!("{:?}", e);
                 };
-            },
+            }
             None => {
                 speculative_alert!(
                     "Speculative state not initialized to log message = {}",
                     message
                 );
-            },
+            }
         };
     }
 }
@@ -126,9 +130,9 @@ pub fn flush_speculative_logs(num_to_flush: usize) {
                 Ok(log_events) => log_events.flush(num_to_flush),
                 Err(_) => {
                     speculative_alert!("Speculative log storage must be uniquely owned to flush");
-                },
+                }
             };
-        },
+        }
         None => {
             if !speculation_disabled() {
                 // Alert only if speculation is not disabled.
@@ -136,7 +140,7 @@ pub fn flush_speculative_logs(num_to_flush: usize) {
                     "Clear all logs called on uninitialized speculative log storage"
                 );
             }
-        },
+        }
     }
 }
 
@@ -151,10 +155,10 @@ pub fn clear_speculative_txn_logs(txn_idx: usize) {
             if let Err(e) = log_events.clear_txn_events(txn_idx) {
                 speculative_alert!("{:?}", e);
             };
-        },
+        }
         None => {
             speculative_alert!("Clear all logs called on uninitialized speculative log storage");
-        },
+        }
     }
 }
 
@@ -163,6 +167,7 @@ pub fn clear_speculative_txn_logs(txn_idx: usize) {
 macro_rules! alert {
     ($($args:tt)+) => {
 	error!($($args)+);
+    #[cfg(feature = "metrics")]
 	CRITICAL_ERRORS.inc();
     };
 }
@@ -171,6 +176,7 @@ macro_rules! alert {
 macro_rules! speculative_alert {
     ($($args:tt)+) => {
 	warn!($($args)+);
+    #[cfg(feature = "metrics")]
 	SPECULATIVE_LOGGING_ERRORS.inc();
     };
 }
