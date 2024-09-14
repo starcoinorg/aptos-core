@@ -90,14 +90,6 @@ impl From<bcs::Error> for Error {
     }
 }
 
-impl From<aptos_secure_net::Error> for Error {
-    fn from(error: aptos_secure_net::Error) -> Self {
-        Self::ServiceError {
-            error: format!("{}", error),
-        }
-    }
-}
-
 macro_rules! delegate_read {
     ($(
         $(#[$($attr:meta)*])*
