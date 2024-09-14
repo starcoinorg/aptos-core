@@ -8,14 +8,13 @@ use base64::URL_SAFE_NO_PAD;
 use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation};
 use move_core_types::value::{MoveStruct, MoveValue};
 use once_cell::sync::Lazy;
-use poem_openapi_derive::Object;
 use ring::signature::RsaKeyPair;
 use rsa::{pkcs1::EncodeRsaPrivateKey, pkcs8::DecodePrivateKey};
 use serde::{Deserialize, Serialize};
 /// Move type `0x1::jwks::RSA_JWK` in rust.
 /// See its doc in Move for more details.
 #[allow(non_camel_case_types)]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Object)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RSA_JWK {
     pub kid: String,
     pub kty: String,
@@ -78,11 +77,11 @@ impl RSA_JWK {
     // The private key to this JWK is found under INTERNAL_TEST_OIDC_PROVIDER_PRIVATE_KEY in aptos-keyless-prod in gcloud secrets
     pub fn secure_test_jwk() -> RSA_JWK {
         RSA_JWK {
-            kid:"test-rsa".to_owned(),
-            kty:"RSA".to_owned(),
-            alg:"RS256".to_owned(),
-            e:"AQAB".to_owned(),
-            n:"y5Efs1ZzisLLKCARSvTztgWj5JFP3778dZWt-od78fmOZFxem3a_aYbOXSJToRp862do0PxJ4PDMpmqwV5f7KplFI6NswQV-WPufQH8IaHXZtuPdCjPOcHybcDiLkO12d0dG6iZQUzypjAJf63APcadio-4JDNWlGC5_Ow_XQ9lIY71kTMiT9lkCCd0ZxqEifGtnJe5xSoZoaMRKrvlOw-R6iVjLUtPAk5hyUX95LDKxwAR-oshnj7gmATejga2EvH9ozdn3M8Go11PSDa04OQxPcA25OoDTfxLvT28LRpSXrbmUWZ-O_lGtDl3ZAtjIguYGEobTk4N11eRssC95Cw".to_owned()
+            kid: "test-rsa".to_owned(),
+            kty: "RSA".to_owned(),
+            alg: "RS256".to_owned(),
+            e: "AQAB".to_owned(),
+            n: "y5Efs1ZzisLLKCARSvTztgWj5JFP3778dZWt-od78fmOZFxem3a_aYbOXSJToRp862do0PxJ4PDMpmqwV5f7KplFI6NswQV-WPufQH8IaHXZtuPdCjPOcHybcDiLkO12d0dG6iZQUzypjAJf63APcadio-4JDNWlGC5_Ow_XQ9lIY71kTMiT9lkCCd0ZxqEifGtnJe5xSoZoaMRKrvlOw-R6iVjLUtPAk5hyUX95LDKxwAR-oshnj7gmATejga2EvH9ozdn3M8Go11PSDa04OQxPcA25OoDTfxLvT28LRpSXrbmUWZ-O_lGtDl3ZAtjIguYGEobTk4N11eRssC95Cw".to_owned(),
         }
     }
 
