@@ -124,7 +124,6 @@ impl WaypointConfig {
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-#[oai(rename_all = "snake_case")]
 pub enum RoleType {
     Validator,
     FullNode,
